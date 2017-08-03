@@ -40,9 +40,6 @@
 int debug = 0;
 int zygote = 0;
 int nomprotect = 0;
-// unsigned int stack_start;   //32bit
-// unsigned int stack_end;
-
 unsigned long int stack_start;   //64bit
 unsigned long int stack_end;
 
@@ -63,6 +60,7 @@ struct symlist {
 struct symtab {
 	struct symlist *st;    /* "static" symbols */
 	struct symlist *dyn;   /* dynamic symbols */
+    	unsigned int offset;
 };
 
 static void *
@@ -136,6 +134,7 @@ do_load(int fd, symtab_t symtab)
 	char *shstrtab = NULL;
 	int i;
 	int ret = -1;
+  	unsigned int offset = 0;
 
 	/* elf header */
 	rv = read(fd, &ehdr, sizeof(ehdr));
@@ -198,6 +197,7 @@ do_load(int fd, symtab_t symtab)
 				goto out;
 			}
 			dynsymh = p;
+      			offset = p->sh_addr - p->sh_offset; // this is needed from android6+
 		} else if (SHT_STRTAB == p->sh_type
 			   && !strncmp(shstrtab+p->sh_name, ".strtab", 7)) {
 			if (strh) {
@@ -228,6 +228,7 @@ do_load(int fd, symtab_t symtab)
 	}
 
 	/* symbol tables */
+  	symtab->offset = offset;
 	if (dynsymh)
 		symtab->dyn = get_syms(fd, dynsymh, dynstrh);
 	if (symh)
@@ -251,6 +252,7 @@ load_symtab(char *filename)
 	fd = open(filename, O_RDONLY);
 	if (0 > fd) {
 		//perror("open");
+        	free(symtab);
 		return NULL;
 	}
 	if (0 > do_load(fd, symtab)) {
@@ -266,51 +268,35 @@ load_symtab(char *filename)
 static int
 load_memmap(pid_t pid, struct mm *mm, int *nmmp)
 {
-	char raw[800000]; // this depends on the number of libraries an executable uses
 	char name[MAX_NAME_LEN];
 	char *p;
 	unsigned long start, end;
 	struct mm *m;
 	int nmm = 0;
-	int fd, rv;
+	int rv;
 	int i;
+	char line[1024];
+	char* s;
 
-	sprintf(raw, "/proc/%d/maps", pid);
-	fd = open(raw, O_RDONLY);
-	if (0 > fd) {
-		printf("Can't open %s for reading\n", raw);
+	// read proc/pid/maps line by line
+	FILE* f = NULL;
+	sprintf(line, "/proc/%d/maps", pid);
+	f = fopen(line,"r");
+	if (!f) {
+		printf("Can't open %s for reading\n", line);
 		return -1;
 	}
-
-	/* Zero to ensure data is null terminated */
-	memset(raw, 0, sizeof(raw));
-
-	p = raw;
-	while (1) {
-		rv = read(fd, p, sizeof(raw)-(p-raw));
-		if (0 > rv) {
-			//perror("read");
-			return -1;
-		}
-		if (0 == rv)
-			break;
-		p += rv;
-		if (p-raw >= sizeof(raw)) {
-			printf("Too many memory mapping\n");
-			return -1;
-		}
-	}
-	close(fd);
-
-	p = strtok(raw, "\n");
 	m = mm;
-	while (p) {
-		/* parse current map line */
-		rv = sscanf(p, "%lx-%lx %*s %*s %*s %*s %s\n",
-			    &start, &end, name);
+	while (1) {
+    		s = fgets(line,sizeof(line),f);
+		if (!s) {
+			break;
+		}
 
-		p = strtok(NULL, "\n");
-
+		// parse line
+		p = strtok(line, "\n");
+		rv = sscanf(p, "%08lx-%08lx %*s %*s %*s %*s %s\n",
+				&start, &end, name);
 		if (rv == 2) {
 			m = &mm[nmm++];
 			m->start = start;
@@ -344,7 +330,7 @@ load_memmap(pid_t pid, struct mm *mm, int *nmmp)
 			strcpy(m->name, name);
 		}
 	}
-
+	fclose(f);
 	*nmmp = nmm;
 	return 0;
 }
@@ -488,7 +474,7 @@ find_name(pid_t pid, char *name, unsigned long *addr)
 		printf("cannot find %s\n", name);
 		return -1;
 	}
-	*addr += libcaddr;
+  	*addr += libcaddr - s->offset;
 	return 0;
 }
 
@@ -523,7 +509,6 @@ write_mem(pid_t pid, unsigned long *buf, int nlong, unsigned long pos)
 	int i;
 
 	for (p = buf, i = 0; i < nlong; p++, i++)
-		// if (0 > ptrace(PTRACE_POKETEXT, pid, (void *)(pos+(i*4)), (void *)*p)) //32bit
 		if (0 > ptrace(PTRACE_POKETEXT, pid, (void *)(pos+(i*8)), (void *)*p))  //64bit
 			return -1;
 	return 0;
@@ -536,12 +521,11 @@ read_mem(pid_t pid, unsigned long *buf, int nlong, unsigned long pos)
 	int i;
 
 	for (p = buf, i = 0; i < nlong; p++, i++){
-		// if ((*p = ptrace(PTRACE_PEEKTEXT, pid, (void *)(pos+(i*4)), (void *)*p)) < 0)
 		if ((*p = ptrace(PTRACE_PEEKTEXT, pid, (void *)(pos+(i*8)), (void *)*p)) < 0){
 			return -1;
 		}
 
-		printf("read_mem 0x%lx---> %lx\n", (pos+(i*8)), *p);
+		//printf("read_mem 0x%lx---> %lx\n", (pos+(i*8)), *p);
 	}
 	return 0;
 }
@@ -715,10 +699,8 @@ int main(int argc, char *argv[])
 			break;
 			case 'l':
 				n = strlen(optarg)+1;
-				// n = n/4 + (n%4 ? 1 : 0); //32bit
 				n = n/8 + (n%8 ? 1 : 0);   //64bit
 				arg = malloc(n*sizeof(unsigned long));
-				// memcpy(arg, optarg, n*4);  //32bit
 				memcpy(arg, optarg, n*8);  //64bit
 				break;
 			case 'm':
@@ -894,15 +876,14 @@ int main(int argc, char *argv[])
 		printf("cannot open %s, error!\n", buf);
 		exit(1);
 	}
-	// ptrace(PTRACE_GETREGS, pid, 0, &regs);   //32bit
-  if(0 > ptrace(PTRACE_GETREGSET, pid, (void*)NT_PRSTATUS, (void*)&iov)){   //64bit
+  	if(0 > ptrace(PTRACE_GETREGSET, pid, (void*)NT_PRSTATUS, (void*)&iov)){   //64bit
 		printf("get registers failed!");
 		exit(1);
 	}
 
-  if(debug){
-    printf("PTRACE_GETREGSET ---> iov start: 0x%lx, iov length: %d\n", iov.iov_base, iov.iov_len);
-  }
+	if(debug){
+		printf("PTRACE_GETREGSET ---> iov start: 0x%lx, iov length: %d\n", iov.iov_base, iov.iov_len);
+	}
 
 	// setup variables of the loading and fixup code
 	/*
@@ -913,16 +894,6 @@ int main(int argc, char *argv[])
 	sc[13] = regs.ARM_sp;
 	sc[15] = dlopenaddr;
 	*/
-
-	//32bit
-	// sc[11] = regs.ARM_r0;
-	// sc[12] = regs.ARM_r1;
-	// sc[13] = regs.ARM_r2;
-	// sc[14] = regs.ARM_r3;
-	// sc[15] = regs.ARM_lr;
-	// sc[16] = regs.ARM_pc;
-	// sc[17] = regs.ARM_sp;
-	// sc[19] = dlopenaddr;
 
 	//64bit
 	sc_64[18] = regs_64.ARM64_x0 & 0xffffffff;
@@ -975,6 +946,8 @@ int main(int argc, char *argv[])
 		stack_start = stack_start << 12;
 		stack_end = stack_start + strtol(argv[4], NULL, 0);
 	}
+	if (debug)
+		printf("stack: 0x%x-0x%x leng = %d\n", stack_start, stack_end, stack_end-stack_start);
 
 	// write library name to stack
 	if (0 > write_mem(pid, (unsigned long*)arg, n, libaddr)) {
@@ -983,7 +956,6 @@ int main(int argc, char *argv[])
 	}
 
 	// write code to stack
-	// codeaddr = regs.ARM_sp - sizeof(sc); //32bit
 	codeaddr = regs_64.ARM64_sp - sizeof(sc_64);  //64bit
 	if (0 > write_mem(pid, (unsigned long*)&sc_64, sizeof(sc_64)/sizeof(long), codeaddr)) {
 		printf("cannot write code, error!\n");
@@ -1021,10 +993,6 @@ int main(int argc, char *argv[])
 	if (nomprotect == 0) {
 		if (debug)
 			printf("calling mprotect\n");
-		//32bit
-		// regs.ARM_lr = codeaddr; // points to loading and fixing code
-		// regs.ARM_pc = mprotectaddr; // execute mprotect()
-
 		//64bit
 		regs_64.ARM64_lr = codeaddr; // points to loading and fixing code
 		regs_64.ARM64_pc = mprotectaddr; // execute mprotect()

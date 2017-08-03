@@ -54,7 +54,7 @@ struct symlist {
 struct symtab {
 	struct symlist *st;    /* "static" symbols */
 	struct symlist *dyn;   /* dynamic symbols */
-    unsigned int offset;
+    	unsigned int offset;
 };
 
 static void *
@@ -191,7 +191,7 @@ do_load(int fd, symtab_t symtab)
 				goto out;
 			}
 			dynsymh = p;
-      		offset = p->sh_addr - p->sh_offset; // this is needed from android6+
+      			offset = p->sh_addr - p->sh_offset; // this is needed from android6+
 		} else if (SHT_STRTAB == p->sh_type
 			   && !strncmp(shstrtab+p->sh_name, ".strtab", 7)) {
 			if (strh) {
@@ -246,7 +246,7 @@ load_symtab(char *filename)
 	fd = open(filename, O_RDONLY);
 	if (0 > fd) {
 		//perror("open");
-        free(symtab);
+        	free(symtab);
 		return NULL;
 	}
 	if (0 > do_load(fd, symtab)) {
@@ -282,7 +282,7 @@ load_memmap(pid_t pid, struct mm *mm, int *nmmp)
 	}
 	m = mm;
 	while (1) {
-    	s = fgets(line,sizeof(line),f);
+    		s = fgets(line,sizeof(line),f);
 		if (!s) {
 			break;
 		}
@@ -298,6 +298,7 @@ load_memmap(pid_t pid, struct mm *mm, int *nmmp)
 			strcpy(m->name, MEMORY_ONLY);
 			continue;
 		}
+
 		if (strstr(name, "stack") != 0) {
 			stack_start = start;
 			stack_end = end;
