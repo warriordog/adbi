@@ -16,7 +16,6 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := base
-
 # Switch out for 32 bit
 # LOCAL_SRC_FILES := ../../base/obj/local/armeabi/libbase.a
 LOCAL_SRC_FILES := ../../base/obj/local/arm64-v8a/libbase.a
@@ -27,10 +26,10 @@ include $(PREBUILT_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE    := libexample
-
 # Switch out for 32 bit
 # LOCAL_SRC_FILES := ../recv.c  ../recv_arm.c.arm
 LOCAL_SRC_FILES := ../recv_arm64.c
+
 LOCAL_CFLAGS := -g
 LOCAL_SHARED_LIBRARIES := dl
 LOCAL_STATIC_LIBRARIES := base
