@@ -17,8 +17,8 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_MODULE    := hijack
-LOCAL_SRC_FILES := ../hijack.c
-# LOCAL_SRC_FILES := ../hijack_arm64.c
+# LOCAL_SRC_FILES := ../hijack.c
+LOCAL_SRC_FILES := ../hijack_arm64.c
 LOCAL_ARM_MODE := arm
 LOCAL_CFLAGS := -g
 
