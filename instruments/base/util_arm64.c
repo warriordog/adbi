@@ -47,6 +47,7 @@ struct symlist {
 struct symtab {
 	struct symlist *st;    /* "static" symbols */
 	struct symlist *dyn;   /* dynamic symbols */
+  	unsigned int offset;
 };
 
 static void* xmalloc(size_t size)
@@ -120,6 +121,7 @@ static int do_load(int fd, symtab_t symtab)
 	Elf64_Shdr *shdr = NULL, *p;
 	Elf64_Shdr *dynsymh, *dynstrh;
 	Elf64_Shdr *symh, *strh;
+  	unsigned int offset = 0;
 	char *shstrtab = NULL;
 	int i;
 	int ret = -1;
@@ -185,6 +187,7 @@ static int do_load(int fd, symtab_t symtab)
 				goto out;
 			}
 			dynsymh = p;
+      			offset = p->sh_addr - p->sh_offset; // this is needed from android6+
 		} else if (SHT_STRTAB == p->sh_type
 			   && !strncmp(shstrtab+p->sh_name, ".strtab", 7)) {
 			if (strh) {
@@ -248,53 +251,37 @@ static symtab_t load_symtab(char *filename)
 	return symtab;
 }
 
-static int load_memmap(pid_t pid, struct mm *mm, int *nmmp)
-{
+static int load_memmap(pid_t pid, struct mm *mm, int *nmmp) {
 	char raw[800000]; // increase this if needed for larger "maps"
 	char name[MAX_NAME_LEN];
 	char *p;
 	unsigned long start, end;
 	struct mm *m;
 	int nmm = 0;
-	int fd, rv;
+	int rv;
 	int i;
+	char line[1024];
+	char* s;
 
-	sprintf(raw, "/proc/%d/maps", pid);
-	fd = open(raw, O_RDONLY);
-	if (0 > fd) {
-		//printf("Can't open %s for reading\n", raw);
+	// read proc/pid/maps line by line
+	FILE* f = NULL;
+	sprintf(line, "/proc/%d/maps", pid);
+	f = fopen(line,"r");
+	if (!f) {
+		printf("Can't open %s for reading\n", line);
 		return -1;
 	}
-
-	/* Zero to ensure data is null terminated */
-	memset(raw, 0, sizeof(raw));
-
-	p = raw;
-	while (1) {
-		rv = read(fd, p, sizeof(raw)-(p-raw));
-		if (0 > rv) {
-			//perror("read");
-			return -1;
-		}
-		if (0 == rv)
-			break;
-		p += rv;
-		if (p-raw >= sizeof(raw)) {
-			//printf("Too many memory mapping\n");
-			return -1;
-		}
-	}
-	close(fd);
-
-	p = strtok(raw, "\n");
 	m = mm;
-	while (p) {
-		/* parse current map line */
-		rv = sscanf(p, "%lx-%lx %*s %*s %*s %*s %s\n",
-			    &start, &end, name);
+	while (1) {
+    	s = fgets(line,sizeof(line),f);
+		if (!s) {
+			break;
+		}
 
-		p = strtok(NULL, "\n");
-
+		// parse line
+		p = strtok(line, "\n");
+		rv = sscanf(p, "%08lx-%08lx %*s %*s %*s %*s %s\n",
+				&start, &end, name);
 		if (rv == 2) {
 			m = &mm[nmm++];
 			m->start = start;
@@ -315,15 +302,17 @@ static int load_memmap(pid_t pid, struct mm *mm, int *nmmp)
 				m->start = start;
 			if (end > m->end)
 				m->end = end;
+				//printf("found name: %s, start:%x, end=%x\n", m->name, m->start, m->end);
 		} else {
 			/* new entry */
 			m = &mm[nmm++];
 			m->start = start;
 			m->end = end;
 			strcpy(m->name, name);
+			//printf("new name: %s, start:%x, end=%x\n", m->name, m->start, m->end);
 		}
 	}
-
+	fclose(f);
 	*nmmp = nmm;
 	return 0;
 }
@@ -428,7 +417,7 @@ int find_name(pid_t pid, char *name, char *libn, unsigned long *addr)
 		log("cannot find function: %s\n", name);
 		return -1;
 	}
-	*addr += libcaddr;
+  	*addr += libcaddr - s->offset;
 	return 0;
 }
 

@@ -187,7 +187,7 @@ static int do_load(int fd, symtab_t symtab)
 				goto out;
 			}
 			dynsymh = p;
-      		offset = p->sh_addr - p->sh_offset; // this is needed from android6+
+      			offset = p->sh_addr - p->sh_offset; // this is needed from android6+
 		} else if (SHT_STRTAB == p->sh_type
 			   && !strncmp(shstrtab+p->sh_name, ".strtab", 7)) {
 			if (strh) {
